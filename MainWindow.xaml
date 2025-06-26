@@ -1,0 +1,31 @@
+﻿<Window x:Class="LineDrawing.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:LineDrawing"
+        mc:Ignorable="d"
+        Title="MainWindow" Height="450" Width="800">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="1*"></RowDefinition>
+            <RowDefinition Height="7*"></RowDefinition>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"></ColumnDefinition>
+                <ColumnDefinition Width="*"></ColumnDefinition>
+                <ColumnDefinition Width="*"></ColumnDefinition>
+                <ColumnDefinition Width="*"></ColumnDefinition>
+            </Grid.ColumnDefinitions>
+            
+            <Button Grid.Column="0" Content="Render" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Click="RenderClick"></Button>
+            <Button Grid.Column="1" Content="Graphics" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Click="GraphicsClick"></Button>
+            <Button Grid.Column="2" Content="RayTrace" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Click="RayTraceClick"></Button>
+            <Button Grid.Column="3" Content="Clear" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"></Button>
+        </Grid>
+
+        <Image x:Name="img" Grid.Row="1"  Margin="0" Stretch="Uniform" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"></Image>
+    </Grid>
+</Window>
