@@ -42,6 +42,16 @@ namespace LineDrawing
                     R = (byte)(pix.R * scalar)};
             }
 
+            public static Pixel operator +(Pixel p1, Pixel p2)
+            {
+                return new Pixel
+                {
+                    B = (byte)Math.Min(p1.B + p2.B, 255),
+                    G = (byte)Math.Min(p1.G + p2.G, 255),
+                    R = (byte)Math.Min(p1.R + p2.R, 255)
+                };
+            }
+
         }
 
         public struct Vector3D
@@ -81,6 +91,13 @@ namespace LineDrawing
                 return vector * scalar; // Reuse the previous overload
             }
 
+            public static Vector3D operator *(Matrix3x3 matrix, Vector3D vector)
+            {
+                return new Vector3D(matrix.m00 * vector.X + matrix.m01 * vector.Y + matrix.m02 * vector.Z,
+                    matrix.m10 * vector.X + matrix.m11 * vector.Y + matrix.m12 * vector.Z,
+                    matrix.m20 * vector.X + matrix.m21 * vector.Y + matrix.m22 * vector.Z);
+            }
+
             public static Vector3D operator /(Vector3D vector, double scalar)
             {
                 if (scalar == 0)
@@ -96,15 +113,68 @@ namespace LineDrawing
             }
         }
 
+        // Matrix3x3 - direct field access
+        public struct Matrix3x3
+        {
+            public double m00, m01, m02;
+            public double m10, m11, m12;
+            public double m20, m21, m22;
+
+            public Matrix3x3(double v00, double v01, double v02, double v10, double v11, double v12, double v20, double v21, double v22)
+            {
+                m00 = v00;
+                m01 = v01;
+                m02 = v02;
+                m10 = v10;
+                m11 = v11;
+                m12 = v12;
+                m20 = v20;
+                m21 = v21;
+                m22 = v22;
+            }
+        }
+
+        public struct Point
+        {
+            public int x;
+            public int y;
+
+            public Point(int x, int y)
+            {
+                this.x = x;
+                this.y = y;
+            }
+        }
+
         public class Scene
         {
             public List<Sphere> spheres;
             public List<Light> lights;
+            public Camera camera;
+            public double theta;
 
             public Scene()
             {
+                theta = 0;
                 spheres = new List<Sphere>();
                 lights = new List<Light>();
+                camera = new Camera();
+            }
+        }
+
+        public class Camera
+        {
+            public Matrix3x3 Rotation;
+            public Vector3D Position;
+            public Camera()
+            {
+                Position = new Vector3D(0, 0, 0);
+                Rotation = new Matrix3x3
+                (
+                    1, 0, 0,
+                    0, 1, 0,
+                    0, 0, 1
+                );
             }
         }
 
@@ -139,8 +209,8 @@ namespace LineDrawing
         private Scene scene;
         private int Cw = 1000;
         private int Ch = 1000;
-        private double Vw = 1.0f;
-        private double Vh = 1.0f;
+        private double Vw = 2.0f;
+        private double Vh = 2.0f;
         private double d = 1.0f;
         private static double inf = double.PositiveInfinity;
 
@@ -189,18 +259,22 @@ namespace LineDrawing
             InitializeComponent();
 
             scene = new Scene();
+
             scene.spheres.Add(new Sphere { Center = new Vector3D(0, -1, 3), Radius = 1.0f, 
                 Color = new Pixel { R = 255, G = 0, B = 0 }, Specular = 500,
                 Reflective = 0.2
             });
+
             scene.spheres.Add(new Sphere { Center = new Vector3D(2,0,4), Radius = 1.0f, 
                 Color = new Pixel { R = 0, G = 0, B = 255 }, Specular = 500,
                 Reflective = 0.3
             });
+
             scene.spheres.Add(new Sphere { Center = new Vector3D(-2,0,4), Radius = 1.0f,
                 Color = new Pixel { R = 0, G = 255, B = 0 }, Specular = 10,
                 Reflective = 0.4
             });
+
             scene.spheres.Add(new Sphere { Center = new Vector3D(0, -5001, 0), Radius = 5000.0f,
                 Color = new Pixel { R = 255, G = 255, B = 0 }, Specular = 1000,
             Reflective = 0.5});
@@ -283,6 +357,193 @@ namespace LineDrawing
             }
         }
 
+        private unsafe double[] Interpolate(int i0, double d0, int i1, double d1) {
+            if (i0 == i1) { 
+                return new double[] { d0 };
+            }
+            var values = new List<double>();
+            var a = (d1 - d0) / (i1 - i0);
+            var d = d0;
+            for (int i = i0; i <= i1; i++)
+            {
+                values.Add(d);
+                d = d + a;
+            }
+            return values.ToArray();
+        }
+
+        public unsafe void Swap(Point *p0, Point *p1)
+        {
+            Point aux = *p0;
+            *p0 = *p1;
+            *p1 = aux;
+        }
+
+        public unsafe void PutPixel(Pixel* image, double x, double y, Pixel color)
+        {
+            var sx = ((Cw / 2) + (int)Math.Floor(x));
+            var sy = ((Ch / 2) - (int)Math.Floor(y)) - 1;
+
+            if (sx == -1)
+            {
+                sx = 0;
+            }
+            else if (sx == Cw)
+            {
+                sx = Cw - 1;
+            }
+
+            if (sy == -1)
+            {
+                sy = 0;
+            }
+            else if (sy == Ch) 
+            { 
+                sy = Ch - 1;
+            }
+
+            image[(sy * Cw) + sx] = color;
+        }
+
+        private unsafe void DrawLineExA(Point p0, Point p1, Pixel color, Pixel* image) {
+            if (Math.Abs(p1.x - p0.x) > Math.Abs(p1.y - p0.y)) {
+                if (p0.x > p1.x)
+                    Swap(&p0, &p1);
+                var ys = Interpolate(p0.x, p0.y, p1.x, p1.y);
+                for (int x = p0.x; x <= p1.x; x++)
+                    PutPixel(image, x, ys[x - p0.x], color);
+            }
+            else {
+                if (p0.y > p1.y)
+                    Swap(&p0, &p1);
+                var xs = Interpolate(p0.y, p0.x, p1.y, p1.x);
+                for (int y = p0.y; y <= p1.y; y++)
+                    PutPixel(image, xs[y - p0.y], y, color);
+            }
+        }
+
+        private unsafe void DrawWireframeTriangle(Point P0, Point P1, Point P2, Pixel color, Pixel* image)
+        {
+            DrawLineExA(P0, P1, color, image);
+            DrawLineExA(P1, P2, color, image);
+            DrawLineExA(P2, P0, color, image);
+        }
+
+        private unsafe void DrawFilledTriangle(Point P0, Point P1, Point P2, Pixel color, Pixel* image)
+        {
+            // 1 - Sort the points so that y0 <= y1 <= y2
+            if (P1.y < P0.y)
+                Swap(&P1, &P0);
+            if (P2.y < P0.y)
+                Swap(&P2, &P0);
+            if (P2.y < P1.y)
+                Swap(&P2, &P1);
+
+            double H0 = 0.0f;
+            double H1 = 0.0f;
+            double H2 = 1.0f;
+
+            // 2 - Compute the x coordinates of the triangle edges
+            var X01 = Interpolate(P0.y, P0.x, P1.y, P1.x);
+            var H01 = Interpolate(P0.y, H0, P1.y, H1);
+            var X12 = Interpolate(P1.y, P1.x, P2.y, P2.x);
+            var H12 = Interpolate(P1.y, H1, P2.y, H2);
+            var X02 = Interpolate(P0.y, P0.x, P2.y, P2.x);
+            var H02 = Interpolate(P0.y, H0, P2.y, H2);
+
+            // 3 - Concatenate the short sides
+            X01 = X01.SkipLast(1).ToArray();
+            var X012 = X01.Concat(X12).ToArray();
+            H01 = H01.SkipLast(1).ToArray();
+            var H012 = H01.Concat(H12).ToArray();
+            // 4 - Determine which is left and which is right
+            var m = (int)Math.Floor((double)(X012.Length / 2));
+            double[]? X_LEFT = null;
+            double[]? X_RIGHT = null;
+            double[]? H_LEFT = null;
+            double[]? H_RIGHT = null;
+            if (X02[m] < X012[m])
+            {
+                X_LEFT = X02;
+                H_LEFT = H02;
+                X_RIGHT = X012;
+                H_RIGHT = H012;
+            }
+            else
+            {
+                X_LEFT = X012;
+                H_LEFT = H012;
+                X_RIGHT = X02;
+                H_RIGHT = H02;
+            }
+            // 5 - Draw the horizontal segments
+            int y0 = P0.y;
+            for (int y = P0.y; y < P2.y; y++)
+            {
+                var X_L = (int)Math.Ceiling(X_LEFT[y - y0]);
+                var X_R = (int)Math.Ceiling(X_RIGHT[y - y0]);
+                var H_SEGMENT = Interpolate(X_L, H_LEFT[y-y0], X_R, H_RIGHT[y-y0]);
+                for (int x = X_L; x < X_R; x++)
+                {
+                    var SHADED_COLOR = color * H_SEGMENT[x - X_L];
+                    PutPixel(image, x, y, SHADED_COLOR);
+                }
+            }
+        }
+
+
+        private unsafe Point ViewportToCanvas(double x, double y)
+        {
+            return new Point((int)Math.Round(x * Cw / Vw) , 
+                (int)Math.Round(y * Ch / Vh));
+        }
+
+        private unsafe Point ProjectVertex(Vector3D v) {
+            return ViewportToCanvas(v.X * d / v.Z, v.Y * d / v.Z);
+        }
+
+        private unsafe void DrawSampleCube(Pixel *image)
+        {
+            // x,y,z
+            var vAf = new Vector3D(-1, 1, 2);
+            var vBf = new Vector3D(1, 1, 2);
+            var vCf = new Vector3D(1, -1, 2);
+            var vDf = new Vector3D(-1, -1, 2);
+
+            var vAb = new Vector3D(-1 + 0.35, 1, 2.4);
+            var vBb = new Vector3D(1 + 0.35, 1, 2.4);
+            var vCb = new Vector3D(1 + 0.35, -1, 2.4);
+            var vDb = new Vector3D(-1 + 0.35, -1, 2.4);
+
+            //var vAf = new Vector3D(-1, 1, 2);
+            //var vBf = new Vector3D(1, 1, 2);
+            //var vCf = new Vector3D(1, -1, 2);
+            //var vDf = new Vector3D(-1, -1, 2);
+
+            //var vAb = new Vector3D(-1, 1, 4);
+            //var vBb = new Vector3D(1, 1, 4);
+            //var vCb = new Vector3D(1, -1, 4);
+            //var vDb = new Vector3D(-1, -1, 4);
+
+            // The front face
+            var P0 = ProjectVertex(vAf);
+            var P1 = ProjectVertex(vBf);
+            DrawLineExA(P0, P1, new Pixel { B = 255, G = 10, R = 3 }, image);
+            DrawLineExA(ProjectVertex(vBf), ProjectVertex(vCf), new Pixel { B = 255, G = 10, R = 3 }, image);
+            DrawLineExA(ProjectVertex(vCf), ProjectVertex(vDf), new Pixel { B = 255, G = 10, R = 3 }, image);
+            DrawLineExA(ProjectVertex(vDf), ProjectVertex(vAf), new Pixel { B = 255, G = 10, R = 3 }, image);
+            // The back face
+            DrawLineExA(ProjectVertex(vAb), ProjectVertex(vBb), new Pixel { B = 3, G = 10, R = 255 }, image);
+            DrawLineExA(ProjectVertex(vBb), ProjectVertex(vCb), new Pixel { B = 3, G = 10, R = 255 }, image);
+            DrawLineExA(ProjectVertex(vCb), ProjectVertex(vDb), new Pixel { B = 3, G = 10, R = 255 }, image);
+            DrawLineExA(ProjectVertex(vDb), ProjectVertex(vAb), new Pixel { B = 3, G = 10, R = 255 }, image);
+            // The front-to-back edges
+            DrawLineExA(ProjectVertex(vAf), ProjectVertex(vAb), new Pixel { B = 3, G = 255, R = 10 }, image);
+            DrawLineExA(ProjectVertex(vBf), ProjectVertex(vBb), new Pixel { B = 3, G = 255, R = 10 }, image);
+            DrawLineExA(ProjectVertex(vCf), ProjectVertex(vCb), new Pixel { B = 3, G = 255, R = 10 }, image);
+            DrawLineExA(ProjectVertex(vDf), ProjectVertex(vDb), new Pixel { B = 3, G = 255, R = 10 }, image);
+        }
+
         private unsafe void DrawCircleEx(int cx, int cy, int radius, int width, int height, Pixel* img)
         {
             Pixel pixel = new Pixel { B = 0, G = 0, R = 255 };
@@ -303,23 +564,26 @@ namespace LineDrawing
 
         private unsafe void RenderClick(object sender, RoutedEventArgs e)
         {
-            var w = 320;
-            var h = 240;
-            var wbmp = new WriteableBitmap(w, h, 96.0f, 96.0f, PixelFormats.Bgr24, null);
+            var wbmp = new WriteableBitmap(Cw, Ch, 96.0f, 96.0f, PixelFormats.Bgr24, null);
             var mem = (Pixel*)wbmp.BackBuffer;
             wbmp.Lock();
-            var pixel = new Pixel { B = 255, G = 100, R = 48 };
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                    mem[y * w + x] = pixel;
-            //DrawLineEx(50, 50, 100, 100, w, h, mem);
-            //DrawLineEx(50, 50, 200, 200, w, h, mem);
-            //DrawLineEx(75, 75, 100, 50, w, h, mem);
-            //DrawLineEx(100, 50, 125, 75, w, h, mem);
-            //DrawLineEx(125, 75, 75, 75, w, h, mem);
-            DrawLineEx(50, 50, 81, 75, w, h, mem);
-            //DrawCircleEx(100, 100, 30, w, h, mem);
-            wbmp.AddDirtyRect(new Int32Rect(0, 0, w, h));
+            var pixel = new Pixel { B = 255, G = 255, R = 255 };
+            for (int y = 0; y < Ch; y++)
+                for (int x = 0; x < Cw; x++)
+                    mem[y * Cw + x] = pixel;
+            //DrawLineExA(new Point(50, 50), new Point(81, 75), w, h, new Pixel { B = 33, G = 25, R = 4 },mem);
+            //DrawLineExA(new Point(250, 300), new Point(800, 750), w, h, new Pixel { B = 33, G = 25, R = 4 }, mem);
+            //DrawLineExA(new Point(81, 75), new Point(50, 700), w, h, new Pixel { B = 33, G = 25, R = 4 }, mem);
+
+            var P0 = new Point(-200, -250);
+            var P1 = new Point(200, 50);
+            var P2 = new Point(20, 250);
+            var color = new Pixel { R = 255, G = 10, B = 3 };
+            var fillColor = new Pixel { R = 3, G = 190, B = 3 };
+            //DrawWireframeTriangle(P0, P1, P2, color, mem);
+            //DrawFilledTriangle(P0, P1, P2, fillColor, mem);
+            DrawSampleCube(mem);
+            wbmp.AddDirtyRect(new Int32Rect(0, 0, Cw, Ch));
             wbmp.Unlock();
             img.Source = wbmp;
         }
@@ -460,7 +724,11 @@ namespace LineDrawing
             return new Tuple<Sphere, double>(closest_sphere, closest_t);
         }
 
-        private unsafe Pixel TraceRay(Vector3D O, Vector3D D, double t_min, double t_max) {
+        private unsafe Vector3D ReflectRay(Vector3D R, Vector3D N) {
+            return 2 * N * Vector3D.DotProduct(N , R) - R;
+        }
+
+        private unsafe Pixel TraceRay(Vector3D O, Vector3D D, double t_min, double t_max, int recursion_depth) {
             var closest = ClosestIntersection(O, D, t_min, t_max);
 
             Sphere closest_sphere = closest.Item1;
@@ -473,44 +741,55 @@ namespace LineDrawing
 
             var P = O + closest_t * D;
             var N = P - closest_sphere.Center;
-            var len = N.Length();
-            N = N / len;
-            var lighting = ComputeLighting(P, N, -1 * D, closest_sphere.Specular);
-            var colorAppliedLighting = closest_sphere.Color * lighting;
-            return colorAppliedLighting;
+            N = N / N.Length();
+            var local_color = closest_sphere.Color * ComputeLighting(P, N, -1 * D, closest_sphere.Specular);
+            
+            var r = closest_sphere.Reflective;
+            if (recursion_depth <= 0 || r <= 0) {
+                return local_color;
+            }
+            var R = ReflectRay(-1 * D, N);
+            var reflected_color = TraceRay(P, R, 0.001, inf, recursion_depth - 1);
+            return (local_color * (1 - r)) + reflected_color * r;
         }
 
         private unsafe void RayTraceClick(object sender, RoutedEventArgs e)
         {
+
             var wbmp = new WriteableBitmap(Cw, Ch, 96.0f, 96.0f, PixelFormats.Bgr24, null);
             var mem = (Pixel*)wbmp.BackBuffer;
             wbmp.Lock();
+            double cos = Math.Cos(Math.PI / 180 * scene.theta);
+            double sin = Math.Sin(Math.PI / 180 * scene.theta);
+            scene.camera.Rotation = new Matrix3x3
+            (
+                cos, 0, sin,
+                0, 1, 0,
+                -sin, 0, cos
+            );
 
             Vector3D O = new Vector3D(0, 0, 0);
-            for (int x = -Cw / 2; x < Cw / 2; x++) {
+            for (int x = -Cw / 2; x < Cw / 2; x++)
+            {
                 for (int y = -Ch / 2; y < Ch / 2; y++)
                 {
-                    var D = CanvasToViewport(x, y);
-                    Pixel color = TraceRay(O, D, 1, inf);
+                    var D = scene.camera.Rotation * CanvasToViewport(x, y);
+                    Pixel color = TraceRay(O, D, 1, inf, 3);
                     PutPixel(x, y, color, mem);
                 }
             }
-
             wbmp.AddDirtyRect(new Int32Rect(0, 0, Cw, Ch));
             wbmp.Unlock();
-
             img.Source = wbmp;
-            SaveWriteableBitmapToFile(wbmp, "E:\\Dump\\raytrace.bmp");
+            scene.theta += 1.0;
+            //SaveWriteableBitmapToFile(wbmp, "E:\\Dump\\raytrace.bmp");
         }
 
         private unsafe void PutPixel(int x, int y, Pixel pixel, Pixel* mem)
         {
-            // X >= -960 && X <= 960
-            // Y >= -540 && Y <= 540
             var sx = ((Cw / 2) + x);
             var sy = ((Ch / 2) - y) - 1;
             mem[(sy * Cw) + sx] = pixel;
-            //0 -> 6 220 799
         }
     }
 }
